@@ -39,7 +39,12 @@ def index_doc(sqlite_cursor: sqlite3.Cursor, path: str):
     )
 
 
-def search_docs(sqlite_cursor: sqlite3.Cursor, terms: list[str], quiet: bool = False):
+def search_docs(
+    sqlite_cursor: sqlite3.Cursor,
+    terms: list[str],
+    quiet: bool = False,
+    full_text_switch=1000,
+):
     term_words = []
     for term in terms:
         term_words.extend(term.split())  # Split multi-word quoted terms into words
@@ -56,10 +61,8 @@ def search_docs(sqlite_cursor: sqlite3.Cursor, terms: list[str], quiet: bool = F
             doc_ids.update([str(row[0]) for row in sqlres])
         else:
             doc_ids.intersection_update([str(row[0]) for row in sqlres])
-    # This was a clever query to search all terms at once but makes it hard to see progress
-    # q = 'SELECT doc_id FROM words WHERE word IN ("' + '", "'.join(term_words) + \
-    #     '") GROUP BY doc_id HAVING COUNT(*) = ' + str(len(term_words)) + ';'
-    # doc_ids = [str(row[0]) for row in sqlite_cursor.execute(q)]
+        if len(doc_ids) < full_text_switch:  # Stop early if search space is small
+            break
     # Get paths of docs from result
     if not quiet:
         print("\nGetting document paths")
@@ -67,7 +70,7 @@ def search_docs(sqlite_cursor: sqlite3.Cursor, terms: list[str], quiet: bool = F
     paths = [row[0] for row in sqlite_cursor.execute(q)]
     paths_to_remove = set()
     # Search resulting files if needed (complex terms)
-    if any(t not in term_words for t in terms):
+    if any(t not in term_words for t in terms) or i < len(term_words) - 1:
         for i, path in enumerate(paths):
             if not quiet:
                 print("Full-text searching result", i + 1, "/", len(paths), end="\r")
@@ -75,20 +78,19 @@ def search_docs(sqlite_cursor: sqlite3.Cursor, terms: list[str], quiet: bool = F
                 txt = " " + " ".join(infile.read().split()) + " "
             txtlower = txt.lower()
             for term in terms:
-                if term not in term_words:
-                    firstmatch = -1
-                    matchlen = len(term)  # Future-proofing terms with markup
-                    if term == term.lower():
-                        firstmatch = txtlower.find(term)
-                    else:
-                        firstmatch = txt.find(term)
-                    if (
-                        firstmatch < 0
-                        or txtlower[firstmatch - 1] in ALPHABET
-                        or txtlower[firstmatch + matchlen] in ALPHABET
-                    ):
-                        paths_to_remove.add(path)  # Not a match
-                        break
+                firstmatch = -1
+                matchlen = len(term)  # Future-proofing terms with markup
+                if term == term.lower():
+                    firstmatch = txtlower.find(term)
+                else:
+                    firstmatch = txt.find(term)
+                if (
+                    firstmatch < 0
+                    or txtlower[firstmatch - 1] in ALPHABET
+                    or txtlower[firstmatch + matchlen] in ALPHABET
+                ):
+                    paths_to_remove.add(path)  # Not a match
+                    break
         if not quiet:
             print()
     paths = sorted(set(paths).difference(paths_to_remove))
@@ -115,6 +117,15 @@ if __name__ == "__main__":
     ap.add_argument(
         "--quiet", action="store_true", help="Output only results in search"
     )
+    ap.add_argument(
+        "--full-text-switch",
+        type=int,
+        default=1000,
+        metavar="COUNT",
+        help="Switch from SQL DB queries to full-text search once fewer than this many "
+        "documents are found (full text search can be faster than querying common "
+        "keywords)",
+    )
     args = ap.parse_args()
 
     sqlcon = sqlite3.connect(args.sqlite_db)
@@ -137,4 +148,4 @@ if __name__ == "__main__":
         print("Deleting SQL word index")
         cursor.execute("DROP INDEX idx_word;")
     if args.search:
-        search_docs(cursor, args.search, args.quiet)
+        search_docs(cursor, args.search, args.quiet, args.full_text_switch)
