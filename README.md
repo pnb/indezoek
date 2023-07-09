@@ -30,6 +30,12 @@ python indezoek.py test.db --dbindex  # Add SQL index
 
 ## Search terms
 
-Documents are matched only if all search terms are present. Search terms are case-insensitive if specified in lowercase; any term with a capital letter in it will be searched for in a case-sensitive fashion. Only letters a-z are allowable in search terms, though spaces are possible by putting quotes around a term, like `--search "the whale" boat chair`.
+Documents are matched only if all search terms are present.
 
 It is best to **put uncommon words first**. The reason is that they are much faster to retrieve from the SQL index, and once the search space is narrow enough, it is faster to search the full text of the documents directly rather than via SQL. By default, Indezoek will switch over to full-text searching once there are fewer than 1,000 possible documents (which can be changed via `--full-text-switch`).
+
+### Search options
+
+* Only letters a-z are allowable in search terms, though spaces are possible by putting quotes around a term, like `--search "the whale" boat chair`
+* Search terms are case-insensitive if specified in lowercase; any term with a capital letter in it will be searched for in a case-sensitive fashion.
+* You can specify a minimum number of occurrences of a term with *(X)* at the beginning, which requires quotation marks; for example: `--search "(10)chair"` or `--search "(3)a chair"`

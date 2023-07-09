@@ -45,18 +45,26 @@ def search_docs(
     quiet: bool = False,
     full_text_switch=1000,
 ):
-    term_words = []
-    for term in terms:
-        term_words.extend(term.split())  # Split multi-word quoted terms into words
-    term_words = [w.lower() for w in term_words]
+    term_words = {}
+    for i, term in enumerate(terms):
+        options = {}
+        if term.startswith("("):
+            options["min_count"] = int(term[1 : term.index(")")])
+            term = term[term.index(")") + 1 :]
+            terms[i] = term
+        for word in term.split():  # Split multi-word quoted terms into words
+            term_words[word.lower()] = options
     # Find docs with all of the words in each of the terms
     doc_ids = set()
     for i, word in enumerate(term_words):
         if not quiet:
-            print("Searching for:", " ".join(term_words[: i + 1]), end="\r")
-        sqlres = sqlite_cursor.execute(
-            "SELECT doc_id FROM words WHERE word = ?", (word,)
-        )
+            print("Searching for:", " ".join(list(term_words)[: i + 1]), end="\r")
+        q = "SELECT doc_id FROM words WHERE word = ?"
+        params = [word]
+        if "min_count" in term_words[word]:
+            q += " AND count >= ?"
+            params.append(term_words[word]["min_count"])
+        sqlres = sqlite_cursor.execute(q, params)
         if i == 0:
             doc_ids.update([str(row[0]) for row in sqlres])
         else:
@@ -69,7 +77,7 @@ def search_docs(
     q = "SELECT path FROM docs WHERE doc_id IN (" + ", ".join(doc_ids) + ");"
     paths = [row[0] for row in sqlite_cursor.execute(q)]
     paths_to_remove = set()
-    # Search resulting files if needed (complex terms)
+    # Search resulting files if needed
     if any(t not in term_words for t in terms) or i < len(term_words) - 1:
         for i, path in enumerate(paths):
             if not quiet:
@@ -78,19 +86,24 @@ def search_docs(
                 txt = " " + " ".join(infile.read().split()) + " "
             txtlower = txt.lower()
             for term in terms:
-                firstmatch = -1
-                matchlen = len(term)  # Future-proofing terms with markup
-                if term == term.lower():
-                    firstmatch = txtlower.find(term)
-                else:
-                    firstmatch = txt.find(term)
-                if (
-                    firstmatch < 0
-                    or txtlower[firstmatch - 1] in ALPHABET
-                    or txtlower[firstmatch + matchlen] in ALPHABET
-                ):
-                    paths_to_remove.add(path)  # Not a match
-                    break
+                options = term_words[term.split()[0].lower()]
+                matchpos = 0
+                matchcount = 0
+                haystack = txtlower if term == term.lower() else txt
+                while True:
+                    matchpos = haystack.find(term, matchpos)
+                    if (
+                        matchpos > 0
+                        and haystack[matchpos - 1] not in ALPHABET
+                        and haystack[matchpos + len(term)] not in ALPHABET
+                    ):  # Another match
+                        matchcount += 1
+                        matchpos += 1
+                    else:  # Not a match
+                        paths_to_remove.add(path)
+                        break
+                    if "min_count" not in options or matchcount >= options["min_count"]:
+                        break  # Found enough matches
         if not quiet:
             print()
     paths = sorted(set(paths).difference(paths_to_remove))
